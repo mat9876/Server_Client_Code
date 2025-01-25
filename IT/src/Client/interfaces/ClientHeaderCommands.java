@@ -26,5 +26,6 @@ public interface ClientHeaderCommands {
     String ROCK = "ROCK";
     String PAPER = "PAPER";
     String SCISSORS = "SCISSORS";
-    String FILE_TRANSFER = "FILE_TRANSFER";
+    String SUCCESS = "SUCCESS";
+    String DRAW = "DRAW";
 }

@@ -2,14 +2,16 @@ package server;
 public class FileUploadRequest {
     private String recipient;
     private String fileName;
+    private String sender;
 
     public FileUploadRequest(){
 
     }
 
-    public FileUploadRequest(String fileName, String recipient){
+    public FileUploadRequest(String fileName, String recipient, String sender){
         this.fileName = fileName;
         this.recipient = recipient;
+        this.sender = sender;
     }
 
     public String getRecipient() {
@@ -26,5 +28,13 @@ public class FileUploadRequest {
 
     public void setFileName(String fileName) {
         this.fileName = fileName;
+    }
+
+    public String getSender() {
+        return sender;
+    }
+
+    public void setSender(String sender) {
+        this.sender = sender;
     }
 }

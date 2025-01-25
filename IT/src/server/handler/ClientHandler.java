@@ -188,9 +188,9 @@ public class ClientHandler implements Runnable, FileServerHeaderCommands, Server
             return;
         }
         if ("ACCEPT".equals(status)) {
-            originalSenderHandler.sendMessage(FILE_UPLOAD_ACK, new FileUploadInfoConfirm(ACCEPTED));
+            originalSenderHandler.sendMessage(FILE_UPLOAD_ACK, new FileUploadInfoConfirm(ACCEPTED, null));
         } else if ("REJECT".equals(status)) {
-            originalSenderHandler.sendMessage(FILE_UPLOAD_ACK, new FileUploadInfoConfirm(REJECTED));
+            originalSenderHandler.sendMessage(FILE_UPLOAD_ACK, new FileUploadInfoConfirm(REJECTED, null));
         }
     }
 
@@ -244,13 +244,14 @@ public class ClientHandler implements Runnable, FileServerHeaderCommands, Server
     private void handleFileUploadRequest(String body) throws IOException {
         FileUploadRequest uploadRequest = objectMapper.readValue(body, FileUploadRequest.class);
         String filename = uploadRequest.getFileName();
-        String recipientUsername = uploadRequest.getRecipient();
-        ClientHandler recipientClient = getClientByUsername(recipientUsername);
+        String sender = uploadRequest.getSender();
+        String recipient = uploadRequest.getRecipient();
+        ClientHandler recipientClient = getClientByUsername(recipient);
         if (recipientClient == null) {
             sendMessage(FILE_UPLOAD_INF, new FileUploadInfo(SENDER_NOT_FOUND_FILE_UPLOADING));
             return;
         }
-        recipientClient.sendMessage(FILE_UPLOAD_REQ, new FileUploadInfoReq(filename, getUsername()));
+        recipientClient.sendMessage(FILE_UPLOAD_REQ, new FileUploadInfoReq(filename, sender));
         sendMessage(FILE_UPLOAD_INF, new FileUploadInfoReq());
     }
 

@@ -255,7 +255,7 @@ public class UsernameClient implements FileClientHeaderCommands, ClientHeaderCom
 
     private void prepareFileOutput(String fileName) {
         try {
-            File file = new File("downloads/" + fileName);
+            File file = new File("src/Client/uploads/" + fileName);
             file.getParentFile().mkdirs(); // Ensure directory exists
             fileOutputStream = new FileOutputStream(file);
         } catch (IOException e) {
@@ -329,13 +329,13 @@ public class UsernameClient implements FileClientHeaderCommands, ClientHeaderCom
     }
 
     public void handleFileAccept(PrintWriter out) {
-        sendMessage(out, FILE_UPLOAD_ACK, new FileUploadAck(ACCEPT, getUsername()));
+        sendMessage(out, FILE_UPLOAD_ACK, new FileUploadAck(ACCEPT, getSender()));
         setInFileUploadRequest(false); // Reset the state
         getConsoleLogger().info("File upload request accepted.");
     }
 
     public void handleFileReject(PrintWriter out) {
-        sendMessage(out, FILE_UPLOAD_ACK, new FileUploadAck(REJECT, getUsername()));
+        sendMessage(out, FILE_UPLOAD_ACK, new FileUploadAck(REJECT, getSender()));
         setInFileUploadRequest(false); // Reset the state
         getConsoleLogger().info("File upload request rejected.");
     }
@@ -418,7 +418,7 @@ public class UsernameClient implements FileClientHeaderCommands, ClientHeaderCom
 
     public void requestFileUpload(String fullPath, String recipientUsername, PrintWriter out) {
         String filename = new File(fullPath).getName();
-        FileUploadRequest uploadRequest = new FileUploadRequest(filename, recipientUsername);
+        FileUploadRequest uploadRequest = new FileUploadRequest(filename, recipientUsername, getUsername());
         sendMessage(out, FILE_UPLOAD_REQ, uploadRequest);
         getConsoleLogger().info(getLanguageManager().getMessage("FileUploadRequested") + " to " + recipientUsername);
     }

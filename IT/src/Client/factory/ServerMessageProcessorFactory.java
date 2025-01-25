@@ -98,7 +98,7 @@ public class ServerMessageProcessorFactory implements FileClientHeaderCommands, 
         try {
             String json = serverMessage.substring(serverMessage.indexOf(' ') + 1);
             ChallengeResponse response = new ObjectMapper().readValue(json, ChallengeResponse.class);
-            if ("SUCCESS".equalsIgnoreCase(response.getStatus())) {
+            if (SUCCESS.equalsIgnoreCase(response.getStatus())) {
                 getUsernameClient().getConsoleLogger().info("Challenge request successful!");
             } else {
                 getUsernameClient().getConsoleLogger().error("Challenge request failed.");
@@ -113,7 +113,7 @@ public class ServerMessageProcessorFactory implements FileClientHeaderCommands, 
             String json = serverMessage.substring(serverMessage.indexOf(' ') + 1);
             ChallengeNotification notification = new ObjectMapper().readValue(json, ChallengeNotification.class);
             String result = notification.senderUsername();
-            if ("DRAW".equalsIgnoreCase(result)) {
+            if (DRAW.equalsIgnoreCase(result)) {
                 getUsernameClient().getConsoleLogger().info("The game ended in a draw!");
             } else {
                 getUsernameClient().getConsoleLogger().info("The winner is: " + result);
@@ -123,10 +123,12 @@ public class ServerMessageProcessorFactory implements FileClientHeaderCommands, 
         }
     }
 
-    public void uploadFileToServer(String filePath) throws IOException {
+    public void uploadFileToServer(String filePath) {
         String sender = getUsernameClient().getFileSender();
-        OutputStream outputStream = null;
+        System.out.println(": "+getUsernameClient().getFileSocket().toString());
+        OutputStream outputStream;
         try {
+
             File file = new File(filePath);
             if (!file.exists() || !file.isFile()) {
                 getUsernameClient().getConsoleLogger().error("File does not exist or is not a valid file: " + filePath);
@@ -152,12 +154,8 @@ public class ServerMessageProcessorFactory implements FileClientHeaderCommands, 
             }
         } catch (IOException e) {
             getUsernameClient().getConsoleLogger().error("Error during file upload: " + e.getMessage());
-        } finally {
-            outputStream.close();
-            getUsernameClient().getFileSocket().close();
         }
     }
-
 
     public void processServerMessage(String serverMessage, PrintWriter out) throws IOException {
         if (serverMessage.startsWith(FILE_UPLOAD_REQ)) {
@@ -165,13 +163,17 @@ public class ServerMessageProcessorFactory implements FileClientHeaderCommands, 
             FileUploadInfoReq uploadInfo = getUsernameClient().getObjectMapper().readValue(body, FileUploadInfoReq.class);
             getUsernameClient().getConsoleLogger().info("File upload request from " + uploadInfo.getUserName() + " for file " + uploadInfo.getFileName());
             getUsernameClient().setInFileUploadRequest(true);
+            getUsernameClient().setSender(uploadInfo.getUserName());
             getUsernameClient().getShowMenu().showFileUploadMenu();
         } else if (serverMessage.startsWith(FILE_UPLOAD_INF)) {
             System.out.println(serverMessage);
         } else if (serverMessage.startsWith(FILE_UPLOAD_ACK)){
             String body = serverMessage.substring(FILE_UPLOAD_INF.length()).trim();
-            Map<String, Object> jsonResponse = getUsernameClient().getObjectMapper().readValue(body, new TypeReference<Map<String, Object>>() {});
+            Map<String, Object> jsonResponse = getUsernameClient().getObjectMapper().readValue(body, new TypeReference<>() {
+            });
             int status = (int) jsonResponse.get("status");
+            String from = (String) jsonResponse.get("from");
+            System.out.println("[!]" + from);
             if (status == ACCEPTED) {
                 System.out.println("File upload request accepted.");
                 String absoluteFilePath = getUsernameClient().getPendingUploadFilePath();
