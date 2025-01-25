@@ -1,0 +1,409 @@
+Can we now implement the file uploading logic inside this file:
+
+package server;
+import java.io.*;
+import java.net.*;
+import java.util.*;
+import java.util.concurrent.*;
+import com.fasterxml.jackson.core.type.*;
+import com.fasterxml.jackson.databind.*;
+
+public class ChatServer {
+
+    // Server settings
+    private static final String VERSION = "1.6.0";
+    private static final int PORT = 1337;
+    private static final String BIND_ADDRESS = "127.0.0.1"; // Use "0.0.0.0" for remote connections
+    private static final boolean SHOULD_PING = true;
+    private static final int PING_FREQ_MS = 10_000;
+    private static final int PING_TIMEOUT_MS = 3_000;
+    private static final int MAX_PENDING = 1024;
+
+    // Protocol commands
+    private static final String BROADCAST = "BROADCAST";
+    private static final String BROADCAST_REQ = "BROADCAST_REQ";
+    private static final String HANGUP = "HANGUP";
+    private static final String READY = "READY";
+    private static final String ENTER = "ENTER";
+    private static final String PING = "PING";
+    private static final String PONG = "PONG";
+    private static final String BYE = "BYE";
+    private static final String LEFT = "LEFT";
+
+    private static final String UNKNOWN_COMMAND = "UNKNOWN_COMMAND";
+    private static final String PARSE_ERROR = "PARSE_ERROR";
+    private static final String ENTER_RESP = "ENTER_RESP";
+    private static final String BYE_RESP = "BYE_RESP";
+    private static final String BROADCAST_RESP = "BROADCAST_RESP";
+    private static final String USER_LIST = "USER_LIST";
+    private static final String PRIVATE_MESSAGE = "PRIVATE_MESSAGE";
+    private static final String PRIVATE_MESSAGE_RESP = "PRIVATE_MESSAGE_RESP";
+    private static final String ROCK = "ROCK";
+    private static final String PAPER = "PAPER";
+    private static final String SCISSORS = "SCISSORS";
+    private static final String START_GAME = "START_GAME";
+    private static final String GAME_STARTED = "GAME_STARTED";
+    private static final String PLAYER_CHOICE = "PLAYER_CHOICE";
+    private static final String GAME_RESULT = "GAME_RESULT";
+
+    // Regex to validate usernames
+    private static final String USERNAME_REGEX = "(?i)^[A-Z0-9_]{3,14}$";
+
+    // Data structures for clients and users
+    private final Set<ClientHandler> clients = ConcurrentHashMap.newKeySet();
+    private final Map<String, ClientHandler> users = new ConcurrentHashMap<>();
+    private final Map<String, GameSession> activeGames = new ConcurrentHashMap<>();
+
+    public static void main(String[] args) {
+        new ChatServer().start();
+    }
+
+    public void start() {
+        System.out.println("Starting server version " + VERSION + " on port " + PORT);
+        System.out.println("Press Ctrl-C to quit the server");
+
+        try (ServerSocket serverSocket = new ServerSocket(PORT, 0, InetAddress.getByName(BIND_ADDRESS))) {
+            while (true) {
+                Socket clientSocket = serverSocket.accept();
+                ClientHandler clientHandler = new ClientHandler(clientSocket);
+                clients.add(clientHandler);
+                new Thread(clientHandler).start();
+            }
+        } catch (IOException e) {
+            System.err.println("Error starting server: " + e.getMessage());
+        }
+    }
+
+    private class ClientHandler implements Runnable {
+        private final Socket socket;
+        private final InputStream in;
+        private final OutputStream out;
+        private String username = "";
+        private byte[] pendingData = new byte[MAX_PENDING];
+        private int pendingLength = 0;
+        private ScheduledExecutorService pingScheduler;
+        private ScheduledFuture<?> pingTask;
+
+        public ClientHandler(Socket socket) throws IOException {
+            this.socket = socket;
+            this.in = socket.getInputStream();
+            this.out = socket.getOutputStream();
+            sendMessage(READY, Map.of("version", VERSION));
+        }
+
+        @Override
+        public void run() {
+            try {
+                byte[] buffer = new byte[1024];
+                int bytesRead;
+
+                while ((bytesRead = in.read(buffer)) != -1) {
+                    processInput(buffer, bytesRead);
+                }
+            } catch (IOException e) {
+                System.err.println("Error communicating with client: " + e.getMessage());
+            } finally {
+                cleanup();
+            }
+        }
+
+        private void processInput(byte[] buffer, int bytesRead) {
+            for (int i = 0; i < bytesRead; i++) {
+                if (pendingLength >= MAX_PENDING) {
+                    sendMessage(HANGUP, Map.of("reason", 7001));
+                    cleanup();
+                    return;
+                }
+
+                if (buffer[i] == '\n') {
+                    String message = new String(pendingData, 0, pendingLength).trim();
+                    pendingLength = 0;
+                    processMessage(message);
+                } else {
+                    pendingData[pendingLength++] = buffer[i];
+                }
+            }
+        }
+
+        private void processMessage(String message) {
+            log("--> " + message);
+
+            try {
+                String command = message.split(" ", 2)[0];
+                String payload = message.substring(command.length()).trim();
+                if (payload.isEmpty()) payload = "{}";
+
+                Map<String, Object> parsedPayload = parsePayload(payload);
+
+                switch (command) {
+                    case BROADCAST_REQ -> processBroadcast(parsedPayload);
+                    case ENTER -> processEnter(parsedPayload);
+                    case PONG -> processPong();
+                    case BYE -> processBye();
+                    case USER_LIST -> processUserList();
+                    case START_GAME -> processStartGame(parsedPayload);
+                    case PLAYER_CHOICE -> processPlayerChoice(parsedPayload);
+                    case PRIVATE_MESSAGE -> processPrivateMessage(parsedPayload);
+
+                    default -> sendMessage(UNKNOWN_COMMAND, null);
+                }
+            } catch (Exception e) {
+                sendMessage(PARSE_ERROR, null);
+            }
+        }
+
+        private Map<String, Object> parsePayload(String payload) throws IOException {
+            if (payload.isEmpty()) return Map.of();
+            return new ObjectMapper().readValue(payload, new TypeReference<Map<String, Object>>() {
+            });
+        }
+
+        private void processUserList() {
+            if (username == null || username.isEmpty()) {
+                sendMessage(USER_LIST, Map.of("status", "ERROR", "code", 7002));
+                return;
+            }
+
+            // Build list of connected usernames
+            List<String> connectedUsers = new ArrayList<>(users.keySet());
+            sendMessage(USER_LIST, Map.of("status", "OK", "users", connectedUsers));
+        }
+
+        private void processPrivateMessage(Map<String, Object> payload) {
+            String recipient = (String) payload.get("recipient");
+            String message = (String) payload.get("message");
+
+            if (recipient == null || message == null || username == null || username.isEmpty()) {
+                sendMessage(PRIVATE_MESSAGE_RESP, Map.of("status", "ERROR", "code", 8001));
+                return;
+            }
+
+            ClientHandler recipientHandler = users.get(recipient);
+            if (recipientHandler == null) {
+                sendMessage(PRIVATE_MESSAGE_RESP, Map.of("status", "ERROR", "code", 8002));
+                return;
+            }
+
+            // Send private message to recipient
+            recipientHandler.sendMessage(PRIVATE_MESSAGE, Map.of("from", username, "message", message));
+            sendMessage(PRIVATE_MESSAGE_RESP, Map.of("status", "OK"));
+        }
+
+        private void processEnter(Map<String, Object> payload) {
+            String username = (String) payload.get("username");
+
+            if (this.username != null && !this.username.isEmpty()) {
+                sendMessage(ENTER_RESP, Map.of("status", "ERROR", "code", 5002));
+            } else if (username == null || !username.matches(USERNAME_REGEX)) {
+                sendMessage(ENTER_RESP, Map.of("status", "ERROR", "code", 5001));
+            } else if (users.containsKey(username)) {
+                sendMessage(ENTER_RESP, Map.of("status", "ERROR", "code", 5000));
+            } else {
+                this.username = username;
+                users.put(username, this);
+                sendMessage(ENTER_RESP, Map.of("status", "OK"));
+
+                if (SHOULD_PING) startHeartbeat();
+                printStats();
+            }
+        }
+
+        private void processBroadcast(Map<String, Object> payload) {
+            String message = (String) payload.get("message");
+
+            if (username == null || username.isEmpty()) {
+                sendMessage(BROADCAST_RESP, Map.of("status", "ERROR", "code", 6000));
+            } else {
+                for (ClientHandler client : clients) {
+                    if (client == this) {
+                        client.sendMessage(BROADCAST_RESP, Map.of("status", "OK"));
+                    } else {
+                        client.sendMessage(BROADCAST, Map.of("username", username, "message", message));
+                    }
+                }
+            }
+        }
+
+        private void processPong() {
+            log("Heartbeat success");
+            if (pingTask != null) {
+                pingTask.cancel(true);
+            }
+        }
+
+        private void processBye() {
+            sendMessage(BYE_RESP, Map.of("status", "OK"));
+            cleanup();
+        }
+
+        private void startHeartbeat() {
+            log("Heartbeat initiated");
+            pingScheduler = Executors.newScheduledThreadPool(1);
+            pingTask = pingScheduler.scheduleAtFixedRate(() -> {
+                sendMessage(PING, null);
+                pingTask = pingScheduler.schedule(() -> {
+                    log("Heartbeat failure");
+                    sendMessage(HANGUP, Map.of("reason", 7000));
+                    cleanup();
+                }, PING_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            }, PING_FREQ_MS, PING_FREQ_MS, TimeUnit.MILLISECONDS);
+        }
+
+
+
+
+        private void sendMessage(String header, Map<String, Object> body) {
+            try {
+                String payload = body != null ? new ObjectMapper().writeValueAsString(body) : "";
+                String fullMessage = header + " " + payload + "\n";
+                log("<-- " + fullMessage.trim());
+                out.write(fullMessage.getBytes());
+                out.flush();
+            } catch (IOException e) {
+                System.err.println("Failed to send message: " + e.getMessage());
+            }
+        }
+
+        private void cleanup() {
+            try {
+                if (username != null && !username.isEmpty()) {
+                    users.remove(username);
+                }
+                clients.remove(this);
+                if (pingScheduler != null) pingScheduler.shutdown();
+                socket.close();
+            } catch (IOException e) {
+                System.err.println("Error during cleanup: " + e.getMessage());
+            }
+            log("Client disconnected.");
+            printStats();
+        }
+
+        private void log(String message) {
+            System.out.println("[" + socket.getRemoteSocketAddress() + "] " + message);
+        }
+
+        private void printStats() {
+            System.out.println(clients.size() + " client(s) / " + users.size() + " user(s)");
+        }
+
+        private void processStartGame(Map<String, Object> payload) {
+            String opponent = (String) payload.get("opponent");
+
+            if (username == null || username.isEmpty()) {
+                sendMessage(GAME_STARTED, Map.of("status", "ERROR", "code", 6000));
+                return;
+            }
+
+            if (opponent == null || !users.containsKey(opponent)) {
+                sendMessage(GAME_STARTED, Map.of("status", "ERROR", "code", 6001));
+                return;
+            }
+
+            // Check if a game is already active between these players
+            if (activeGames.containsKey(username) || activeGames.containsKey(opponent)) {
+                sendMessage(GAME_STARTED, Map.of("status", "ERROR", "code", 6002, "message", "A game is already in progress."));
+                return;
+            }
+
+            // Proceed to create the game session
+            ClientHandler opponentHandler = users.get(opponent);
+            GameSession gameSession = new GameSession(this, opponentHandler);
+            activeGames.put(username, gameSession);
+            activeGames.put(opponent, gameSession);
+
+            sendMessage(GAME_STARTED, Map.of("status", "OK", "opponent", opponent));
+            opponentHandler.sendMessage(GAME_STARTED, Map.of("status", "OK", "opponent", username));
+        }
+
+        private void processPlayerChoice(Map<String, Object> payload) {
+            String choice = (String) payload.get("choice");
+
+            if (choice == null || !isValidChoice(choice)) {
+                sendMessage(GAME_RESULT, Map.of("status", "ERROR", "code", 7001));
+                return;
+            }
+
+            GameSession gameSession = activeGames.get(username);
+            if (gameSession == null) {
+                sendMessage(GAME_RESULT, Map.of("status", "ERROR", "code", 7002));
+                return;
+            }
+
+            if (this == gameSession.playerA) {
+                gameSession.setChoiceA(choice);
+            } else if (this == gameSession.playerB) {
+                gameSession.setChoiceB(choice);
+            }
+
+            // Notify both players if the game is complete
+            if (gameSession.isGameComplete()) {
+                gameSession.notifyPlayers();
+                activeGames.remove(gameSession.playerA.username);
+                activeGames.remove(gameSession.playerB.username);
+            }
+        }
+
+        private boolean isValidChoice(String choice) {
+            return choice.equals(ROCK) || choice.equals(PAPER) || choice.equals(SCISSORS);
+        }
+    }
+
+    private class GameSession {
+        private final ClientHandler playerA;
+        private final ClientHandler playerB;
+        private String choiceA;
+        private String choiceB;
+
+        public GameSession(ClientHandler playerA, ClientHandler playerB) {
+            this.playerA = playerA;
+            this.playerB = playerB;
+        }
+
+        public boolean isGameComplete() {
+            return choiceA != null && choiceB != null;
+        }
+
+        public void setChoiceA(String choice) {
+            this.choiceA = choice;
+        }
+
+        public void setChoiceB(String choice) {
+            this.choiceB = choice;
+        }
+
+        public void notifyPlayers() {
+            // Determine the winner
+            String winner = determineWinner();
+            playerA.sendMessage(GAME_RESULT, Map.of("winner", winner, "choiceA", choiceA, "choiceB", choiceB));
+            playerB.sendMessage(GAME_RESULT, Map.of("winner", winner, "choiceA", choiceA, "choiceB", choiceB));
+        }
+
+        private String determineWinner() {
+            if (choiceA.equals(choiceB)) return "DRAW";
+            switch (choiceA) {
+                case ROCK:
+                    return choiceB.equals(SCISSORS) ? "PLAYER_A" : "PLAYER_B";
+                case PAPER:
+                    return choiceB.equals(ROCK) ? "PLAYER_A" : "PLAYER_B";
+                case SCISSORS:
+                    return choiceB.equals(PAPER) ? "PLAYER_A" : "PLAYER_B";
+                default:
+                    return "DRAW";
+            }
+        }
+    }
+}
+
+And this client code:
+
+package client;
+import java.io.*;
+import java.net.*;
+import java.util.Scanner;
+import com.fasterxml.jackson.databind.*;
+
+public class ChatClient {
+    private static final String SERVER_ADDRESS = "127.0.0.1";
+    private static final int SERVER_PORT = 1337;
+    priva

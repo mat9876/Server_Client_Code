@@ -1,0 +1,12 @@
+package server.interfaces;
+
+public interface ServerHeaderCode {
+    int INVALID_UPLOAD_REQUEST_EMPTY_BODY = 5650;
+    int INVALID_UPLOAD_REQUEST = 5651;
+    int SENDER_NOT_FOUND_FILE_UPLOADING = 5652;
+    int RECIPIENT_NOT_FOUND_FILE_UPLOADING = 5653;
+    int FAILED_FORWARD_REQUEST = 5654;
+    int ACCEPTED = 5655;
+    int REJECTED = 5656;
+    int SOCKET_NOT_FOUND = 5657;
+}
