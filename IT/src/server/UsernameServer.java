@@ -54,30 +54,27 @@ public class UsernameServer {
         return clients;
     }
 
-    public void sendFileToClient(String username, byte[] rawBytes, String fileName, long fileSize) throws IOException {
-        System.out.println("[DEBUG] Sending file to client: " + username);
-        ClientHandler client = getClientByUsername(username);
-        if (client == null) {
-            System.err.println("[ERROR] No client found with username: " + username);
+    public void sendFileToClient(String username, File inputFile) throws IOException {
+        ClientHandler clientHandler = getClientByUsername(username);
+        if (clientHandler == null) {
+            System.err.println("Client not found: " + username);
             return;
         }
-        OutputStream clientOut = null;
-        PrintWriter writer = null;
-        try {
-            clientOut = client.getFileSocket().getOutputStream();
-            writer = new PrintWriter(clientOut, true);
-            String metadata = "FILE_META " + fileName + " " + fileSize;
-            System.out.println("[DEBUG] Sending metadata: " + metadata);
-            writer.println(metadata);
-            writer.flush();
-            clientOut.write(rawBytes);
-            clientOut.flush();
-            System.out.println("[DEBUG] File sent successfully.");
+
+        // Create a FileInputStream from the FileOutputStream's file
+        System.out.println("X: "+clientHandler.getFileSocket().toString());
+        try (FileInputStream fileInputStream = new FileInputStream(inputFile);
+             OutputStream clientOutputStream = clientHandler.getFileSocket().getOutputStream()) {
+            byte[] buffer = new byte[8192];
+            int bytesRead;
+            while ((bytesRead = fileInputStream.read(buffer)) != -1) {
+                clientOutputStream.write(buffer, 0, bytesRead);
+                clientOutputStream.flush();
+            }
+
+            System.out.println("File sent to client: " + username);
         } catch (IOException e) {
-            System.err.println("[ERROR] Error sending file to client: " + e.getMessage());
-        } finally {
-            writer.close();
-            clientOut.close();
+            System.err.println("Error sending file to client: " + e.getMessage());
         }
     }
 
@@ -103,9 +100,7 @@ public class UsernameServer {
 
         @Override
         public void run() {
-
-            try (InputStream inputStream = fileSocket.getInputStream();
-                 ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream()) {
+            try (InputStream inputStream = fileSocket.getInputStream()) {
                 StringBuilder sb = new StringBuilder();
                 int ch;
                 while ((ch = inputStream.read()) != -1) {
@@ -140,7 +135,7 @@ public class UsernameServer {
                 outputFile = new File(uploadDir, fileName);
                 FileOutputStream fileOutputStream = null;
                 try {
-                    fileOutputStream = new FileOutputStream(outputFile); //NOTE: BYTES HERE.
+                    fileOutputStream = new FileOutputStream(outputFile); //NOTE: BYTES OF THE FILE HERE.
                     byte[] buffer = new byte[8192];
                     System.out.println("X:" + outputFile.length());
                     int bytesRead;
@@ -153,17 +148,10 @@ public class UsernameServer {
                         if (totalBytesRead >= fileSize) {
                             break;
                         }
-                        byteArrayOutputStream.write(buffer, 0, bytesRead); //Buffer the raw bytes
-                        totalBytesRead += bytesRead;
                     }
                     System.out.println("C:" + totalBytesRead + " D:" + outputFile.length() + " E:" + fileSize);
                     System.out.println("File received and saved: " + outputFile.getAbsolutePath());
-                    if (totalBytesRead != fileSize) {
-                        System.err.println("[ERROR] File size mismatch. Expected: " + fileSize + ", Received: " + totalBytesRead);
-                    } else {
-                        System.out.println("[DEBUG] File received and saved: " + outputFile.getAbsolutePath());
-                        server.sendFileToClient(sender, byteArrayOutputStream.toByteArray(), fileName, fileSize);
-                    }
+                    server.sendFileToClient(sender, outputFile);
                 } finally {
                     assert fileOutputStream != null;
                     fileOutputStream.close();
