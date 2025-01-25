@@ -2,6 +2,7 @@ package server;
 import server.handler.*;
 import java.io.*;
 import java.net.*;
+import java.nio.charset.*;
 import java.util.*;
 import java.util.concurrent.*;
 
@@ -54,27 +55,36 @@ public class UsernameServer {
         return clients;
     }
 
-    public void sendFileToClient(String username, File inputFile) throws IOException {
-        ClientHandler clientHandler = getClientByUsername(username);
+    public void sendFileToClient(File file, String recipientUsername) throws IOException {
+        ClientHandler clientHandler = getClientByUsername(recipientUsername);
         if (clientHandler == null) {
-            System.err.println("Client not found: " + username);
+            System.err.println("Client with username " + recipientUsername + " not found.");
             return;
         }
-
-        // Create a FileInputStream from the FileOutputStream's file
-        System.out.println("X: "+clientHandler.getFileSocket().toString());
-        try (FileInputStream fileInputStream = new FileInputStream(inputFile);
-             OutputStream clientOutputStream = clientHandler.getFileSocket().getOutputStream()) {
+        System.out.println("W:" + clientHandler.getFileSocket().toString());
+        OutputStream outputStream = null;
+        Socket recipientSocket = null;
+        try {
+            recipientSocket = clientHandler.getFileSocket();
+            outputStream = recipientSocket.getOutputStream();
+            FileInputStream fileInputStream = new FileInputStream(file);
+            String metadata = String.format("FILE_META %s %d %s\n", file.getName(), file.length(), clientHandler.getUsername());
+            System.out.println("Y:" + metadata + "\nZ: " + outputStream.toString());
+            outputStream.write(metadata.getBytes(StandardCharsets.UTF_8));
+            outputStream.flush();
             byte[] buffer = new byte[8192];
             int bytesRead;
             while ((bytesRead = fileInputStream.read(buffer)) != -1) {
-                clientOutputStream.write(buffer, 0, bytesRead);
-                clientOutputStream.flush();
+                System.out.println("!:" + bytesRead + "\n?: " + outputStream);
+                outputStream.write(buffer, 0, bytesRead);
+                outputStream.flush();
             }
-
-            System.out.println("File sent to client: " + username);
+            System.out.println("File sent to " + recipientUsername + ": " + file.getAbsolutePath());
         } catch (IOException e) {
-            System.err.println("Error sending file to client: " + e.getMessage());
+            System.err.println("Error sending file to " + recipientUsername + ": " + e.getMessage());
+        } finally {
+            outputStream.close();
+            recipientSocket.close();
         }
     }
 
@@ -151,7 +161,7 @@ public class UsernameServer {
                     }
                     System.out.println("C:" + totalBytesRead + " D:" + outputFile.length() + " E:" + fileSize);
                     System.out.println("File received and saved: " + outputFile.getAbsolutePath());
-                    server.sendFileToClient(sender, outputFile);
+                    server.sendFileToClient(outputFile, sender);
                 } finally {
                     assert fileOutputStream != null;
                     fileOutputStream.close();
